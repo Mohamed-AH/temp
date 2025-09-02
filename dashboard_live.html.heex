@@ -107,12 +107,13 @@
       <!-- Optimized Live Metrics Panel -->
       <div class="mt-6 mx-2 p-3 bg-gray-800 rounded">
         <div class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wide">LIVE METRICS</div>
+               
         <%= cond do %>
-          <% @selected_app && @app_metrics[@selected_app] && @app_metrics[@selected_app] != {:error, _} -> %>
-            <!-- Show actual metrics -->
-            <%
-              current_metrics = @app_metrics[@selected_app] || []
-            %>
+             <% @selected_app && @app_metrics[@selected_app] && not match?({:error, _}, @app_metrics[@selected_app]) -> %>
+              <!-- Show actual metrics -->
+              <%
+                current_metrics = @app_metrics[@selected_app] || []
+              %>
             <div class="space-y-1 text-xs">
               <%= for {label, result} <- current_metrics do %>
                 <div>
@@ -376,9 +377,6 @@
         </div>
       <% end %>
       
-      <%= if @is_typing do %>
-        <div class="flex space-x-3">
-          <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify      
       <%= if @is_typing do %>
         <div class="flex space-x-3">
           <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
