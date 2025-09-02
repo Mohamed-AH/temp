@@ -369,7 +369,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
           :binary,
           :exit_status,
           {:args, cmd_args},
-          {:env, [{"FLY_API_TOKEN", token}]}
+          # {:env, [{"FLY_API_TOKEN", token}]}
         ]
       )
 
@@ -627,86 +627,103 @@ defmodule FullstackChallengeWeb.DashboardLive do
     end
   end
 
-  defp allocate_ip_addresses(token, app_name) do
-    headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    ipv4_mutation = %{
-      query: """
-        mutation($input: AllocateIPAddressInput!) {
-          allocateIpAddress(input: $input) {
-            ipAddress {
-              id
-              address
-              type
-            }
-          }
-        }
-      """,
-      variables: %{
-        input: %{
-          appId: app_name,
-          type: "v4"
-        }
-      }
-    }
-    case Req.post("https://api.fly.io/graphql",
-           headers: headers,
-           body: Jason.encode!(mutation)
-         ) do
-      {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv4_data}}}} when not is_nil(ipv4_data) ->
-        Logger.info("Allocated IPv4 for app #{app_name}: #{inspect(ipv4_data)}")
-        allocate_ipv6(token, app_name)
-        {:ok, ipv4_data}
-      {:ok, %{status: 200, body: %{"errors" => errors}}} ->
-        Logger.warning("GraphQL errors allocating IP: #{inspect(errors)}")
-        error_msg = get_in(errors, [Access.at(0), "message"]) || "IP allocation error"
-        {:error, error_msg}
-      {:ok, %{status: 401}} ->
-        {:error, "Invalid token"}
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("IP allocation API returned status #{status} with body: #{inspect(body)}")
-        {:error, "IP allocation failed (#{status})"}
-      {:error, reason} ->
-        Logger.error("Network error allocating IP: #{inspect(reason)}")
-        {:error, "Network error"}
-    end
-  end
+defp allocate_ip_addresses(token, app_name) do
+  headers = [
+    {"Authorization", "Bearer #{token}"},
+    {"Content-Type", "application/json"}
+  ]
 
-  defp allocate_ipv6(token, app_name) do
-    headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    ipv6_mutation = %{
-      query: """
-        mutation($input: AllocateIPAddressInput!) {
-          allocateIpAddress(input: $input) {
-            ipAddress {
-              id
-              address
-              type
-            }
-          }
-        }
-      """,
-      variables: %{
-        input: %{
-          appId: app_name,
-          type: "v6"
+  ipv4_mutation = %{
+    query: """
+    mutation($input: AllocateIPAddressInput!) {
+      allocateIpAddress(input: $input) {
+        ipAddress {
+          id
+          address
+          type
         }
       }
     }
-    case Req.post("https://api.fly.io/graphql",
-           headers: headers,
-           body: Jason.encode!(mutation)
-         ) do
-      {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv6_data}}}} when not is_nil(ipv6_data) ->
-        Logger.info("Allocated IPv6 for app #{app_name}: #{inspect(ipv6_data)}")
-        {:ok, ipv6_data}
-      {:ok, %{status: 200, body: %{"errors" => _errors}}} ->
-        Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
-        {:ok, nil}
-      _ ->
-        Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
-        {:ok, nil}
-    end
+    """,
+    variables: %{
+      input: %{
+        appId: app_name,
+        type: "v4"
+      }
+    }
+  }
+
+  case Req.post("https://api.fly.io/graphql",
+         headers: headers,
+         body: Jason.encode!(ipv4_mutation)
+       ) do
+    {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv4_data}}}} when not is_nil(ipv4_data) ->
+      Logger.info("Allocated IPv4 for app #{app_name}: #{inspect(ipv4_data)}")
+      allocate_ipv6(token, app_name)
+      {:ok, ipv4_data}
+
+    {:ok, %{status: 200, body: %{"errors" => errors}}} ->
+      Logger.warning("GraphQL errors allocating IP: #{inspect(errors)}")
+      error_msg = get_in(errors, [Access.at(0), "message"]) || "IP allocation error"
+      {:error, error_msg}
+
+    {:ok, %{status: 401}} ->
+      {:error, "Invalid token"}
+
+    {:ok, %{status: status, body: body}} ->
+      Logger.warning("IP allocation API returned status #{status} with body: #{inspect(body)}")
+      {:error, "IP allocation failed (#{status})"}
+
+    {:error, reason} ->
+      Logger.error("Network error allocating IP: #{inspect(reason)}")
+      {:error, "Network error"}
   end
+end
+
+defp allocate_ipv6(token, app_name) do
+  headers = [
+    {"Authorization", "Bearer #{token}"},
+    {"Content-Type", "application/json"}
+  ]
+
+  ipv6_mutation = %{
+    query: """
+    mutation($input: AllocateIPAddressInput!) {
+      allocateIpAddress(input: $input) {
+        ipAddress {
+          id
+          address
+          type
+        }
+      }
+    }
+    """,
+    variables: %{
+      input: %{
+        appId: app_name,
+        type: "v6"
+      }
+    }
+  }
+
+  case Req.post("https://api.fly.io/graphql",
+         headers: headers,
+         body: Jason.encode!(ipv6_mutation)
+       ) do
+    {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv6_data}}}} when not is_nil(ipv6_data) ->
+      Logger.info("Allocated IPv6 for app #{app_name}: #{inspect(ipv6_data)}")
+      {:ok, ipv6_data}
+
+    {:ok, %{status: 200, body: %{"errors" => _errors}}} ->
+      Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
+      {:ok, nil}
+
+    _ ->
+      Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
+      {:ok, nil}
+  end
+end
+
 
   defp deploy_nginx_app(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
