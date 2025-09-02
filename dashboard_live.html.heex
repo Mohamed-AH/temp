@@ -353,51 +353,51 @@
     </div>
 
     <!-- Chat Messages -->
-    <div class="flex-1 overflow-y-auto p-4 space-y-4">
-      <%= for msg <- @messages[@selected_app] || [] do %>
-        <div class="flex space-x-3">
-          <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0">
-            <span class="text-lg"><%= if msg.type == :ai, do: "🤖", else: "👤" %></span>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline space-x-2">
-              <span class="font-medium text-white">
-                <%= if msg.type == :ai, do: "AI Monitor", else: "You" %>
-              </span>
-              <span class="text-xs text-gray-400"><%= msg.timestamp %></span>
-            </div>
-            <div class="mt-1 text-gray-100 whitespace-pre-wrap break-words">
-              <%= raw(msg.content
-                |> String.replace(~r/\*\*(.*?)\*\*/, "<strong>\\1</strong>")
-                |> String.replace(~r/`(.*?)`/, "<code class=\"bg-gray-800 px-1 rounded text-sm\">\\1</code>")
-                |> String.replace(~r/```([^`]*?)```/s, "<pre class=\"bg-gray-900 p-3 rounded border-l-4 border-gray-600 my-2 text-sm overflow-x-auto\"><code>\\1</code></pre>")
-              ) %>
-            </div>
-          </div>
+<div class="flex-1 overflow-y-auto p-4 space-y-4">
+  <%= for msg <- @messages[@selected_app] || [] do %>
+    <div class="flex space-x-3">
+      <!-- Avatar -->
+      <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
+        <span class="text-lg"><%= if msg.type == :ai, do: "🤖", else: "👤" %></span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-baseline space-x-2">
+          <span class="font-medium text-white"><%= if msg.type == :ai, do: "AI Monitor", else: "You" %></span>
+          <span class="text-xs text-gray-400"><%= msg.timestamp %></span>
         </div>
-      <% end %>
-      
-      <%= if @is_typing do %>
-        <div class="flex space-x-3">
-          <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
-            <span class="text-lg">🤖</span>
-          </div>
-          <div class="flex-1">
-            <div class="flex items-baseline space-x-2">
-              <span class="font-medium text-white">AI Monitor</span>
-              <span class="text-xs text-gray-400">thinking...</span>
-            </div>
-            <div class="mt-1">
-              <div class="flex space-x-1">
-                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
-                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
-              </div>
-            </div>
-          </div>
+        <div class="mt-1 text-gray-100 whitespace-pre-wrap break-words">
+          <%= raw(msg.content
+            |> String.replace(~r/**(.*?)**/, "<strong>\\1</strong>")
+            |> String.replace(~r/`(.*?)`/, "<code class=\"bg-gray-800 px-1 rounded text-sm\">\\1</code>")
+            |> String.replace(~r/``````/s, "<pre class=\"bg-gray-900 p-3 rounded border-l-4 border-gray-600 my-2 text-sm overflow-x-auto\"><code>\\1</code></pre>")
+          ) %>
         </div>
-      <% end %>
+      </div>
     </div>
+  <% end %>
+
+  <%= if @is_typing do %>
+    <div class="flex space-x-3">
+      <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
+        <span class="text-lg">🤖</span>
+      </div>
+      <div class="flex-1">
+        <div class="flex items-baseline space-x-2">
+          <span class="font-medium text-white">AI Monitor</span>
+          <span class="text-xs text-gray-400">thinking...</span>
+        </div>
+        <div class="mt-1">
+          <div class="flex space-x-1">
+            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+</div>
+
 
     <!-- Message Input -->
     <form phx-submit="send_message" class="p-4">
