@@ -147,24 +147,41 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   def handle_event("send_message", _params, socket) do
-    app = socket.assigns.selected_app
-    msg = (socket.assigns.typing_message || "") |> String.trim()
-    if msg == "" do
-      {:noreply, socket}
-    else
-      user_msg = %{
-        type: :user,
-        content: msg,
+  app_id = socket.assigns.selected_app
+  app = Enum.find(socket.assigns.discord_apps, &(&1.id == app_id))
+  msg = (socket.assigns.typing_message || "") |> String.trim()
+  if msg == "" or is_nil(app) do
+    {:noreply, socket}
+  else
+    user_msg = %{
+      type: :user,
+      content: msg,
+      timestamp: timestamp_now()
+    }
+    # Update messages history
+    updated_messages = Map.update(socket.assigns.messages, app_id, [user_msg], &(&1 ++ [user_msg]))
+    socket = socket |> assign(messages: updated_messages, typing_message: "", is_typing: true)
+
+    # Call OpenRouter asynchronously
+    self_pid = self()
+    Task.start(fn ->
+      ai_reply =
+        case openrouter_chat_api(app, [user_msg]) do
+          {:ok, reply} -> reply
+          {:error, reason} -> "AI error: #{reason}"
+        end
+      ai_msg = %{
+        type: :ai,
+        content: ai_reply,
         timestamp: timestamp_now()
       }
-      updated_messages = Map.update(socket.assigns.messages, app, [user_msg], &(&1 ++ [user_msg]))
-      socket =
-        socket
-        |> assign(messages: updated_messages, typing_message: "", is_typing: true)
-      Process.send_after(self(), {:bot_reply, msg, app}, 1200)
-      {:noreply, socket}
-    end
+      send(self_pid, {:bot_reply, ai_msg, app_id})
+    end)
+
+    {:noreply, socket}
   end
+end
+
 
   #########################
   #   LOGS HANDLERS       #
@@ -292,15 +309,11 @@ defmodule FullstackChallengeWeb.DashboardLive do
      |> put_flash(:error, "Log stream error: #{error}")}
   end
 
-  def handle_info({:bot_reply, user_msg, app}, socket) do
-    ai_msg = %{
-      type: :ai,
-      content: generate_bot_reply(user_msg, app, socket),
-      timestamp: timestamp_now()
-    }
-    updated_messages = Map.update(socket.assigns.messages, app, [ai_msg], &(&1 ++ [ai_msg]))
-    {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
-  end
+ def handle_info({:bot_reply, ai_msg, app_id}, socket) do
+  updated_messages = Map.update(socket.assigns.messages, app_id, [ai_msg], &(&1 ++ [ai_msg]))
+  {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
+end
+
 
   #########################
   #   ASYNC HELPERS       #
@@ -937,5 +950,32 @@ end
     "#{pad2(t.hour)}:#{pad2(t.minute)}"
   end
 
+defp openrouter_chat_api(app, message_history) do
+  model = "moonshotai/kimi-k2:free" # Use your preferred OpenRouter model
+  app_details = "Name: #{app.name}, Status: #{app.status}, Type: #{app.type}"
+  # Compose messages for OpenRouter API
+  messages = [
+    %{role: "system", content: "App Details: #{app_details}"},
+    %{role: "user", content: List.last(message_history).content}
+  ]
+
+  body = %{model: model, messages: messages} |> Jason.encode!()
+  headers = [
+    {"Authorization", "Bearer #{System.get_env("OPENROUTER_API_KEY")}"}, 
+    {"Content-Type", "application/json"}
+  ]
+  url = "https://openrouter.ai/api/v1/chat/completions"
+  case HTTPoison.post(url, body, headers) do
+    {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
+      case Jason.decode(resp_body) do
+        {:ok, %{"choices" => [%{"message" => %{"content" => reply}} | _]}} -> {:ok, reply}
+        _ -> {:error, "AI response parse error"}
+      end
+    err -> {:error, inspect(err)}
+  end
+end
+
+
   defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
 end
+
