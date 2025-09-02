@@ -16,7 +16,7 @@
     <%= for app <- @apps do %>
       <div 
         class={"w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all duration-200 relative " <>
-        if(@selected_app == app.id, do: "bg-indigo-500 rounded-xl", else: "bg-gray-700 hover:bg-indigo-500 hover:rounded-xl")}
+        if(@selected_app == app.id, do: "bg-indigo-500 rounded-xl ring-2 ring-indigo-400 ring-opacity-50", else: "bg-gray-700 hover:bg-indigo-500 hover:rounded-xl")}
         phx-click="select_app"
         phx-value-app={app.id}
       >
@@ -29,6 +29,10 @@
           _ -> "bg-gray-400"
         end
         }></div>
+        <!-- Selection indicator -->
+        <%= if @selected_app == app.id do %>
+          <div class="absolute -left-1 top-1/2 transform -translate-y-1/2 w-1 h-8 bg-white rounded-r-full animate-pulse"></div>
+        <% end %>
       </div>
     <% end %>
   </div>
@@ -64,15 +68,18 @@
         </div>
       </div>
       
-      <!-- App List -->
+      <!-- App List with instant switching -->
       <div class="space-y-0.5 px-2">
         <%= for app <- @apps do %>
           <div
-            class={"flex items-center px-2 py-1.5 rounded cursor-pointer group transition-colors duration-150 " <>
-              if(@selected_app == app.id, do: "bg-gray-600 text-white", else: "text-gray-300 hover:bg-gray-600 hover:text-white")}
+            class={"flex items-center px-2 py-1.5 rounded cursor-pointer group transition-all duration-150 " <>
+              if(@selected_app == app.id, do: "bg-gray-600 text-white ring-1 ring-indigo-500", else: "text-gray-300 hover:bg-gray-600 hover:text-white")}
             phx-click="select_app"
             phx-value-app={app.id}
           >
+            <%= if @selected_app == app.id do %>
+              <div class="w-1 h-8 bg-indigo-500 rounded-r-full mr-2 animate-pulse"></div>
+            <% end %>
             <svg class="w-5 h-5 mr-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
               <path fill-rule="evenodd" d="M9.243 3.03a1 1 0 01.727 1.213L9.53 6h2.94l.56-2.243a1 1 0 111.94.486L14.53 6H17a1 1 0 110 2h-2.97l-1 4H15a1 1 0 110 2h-2.47l-.56 2.242a1 1 0 11-1.94-.485L10.47 14H7.53l-.56 2.242a1 1 0 11-1.94-.485L5.47 14H3a1 1 0 110-2h2.97l1-4H5a1 1 0 110-2h2.47l.56-2.243a1 1 0 011.213-.727zM9.03 8l-1 4h2.94l1-4H9.03z" clip-rule="evenodd"/>
             </svg>
@@ -97,76 +104,115 @@
         <% end %>
       </div>
       
-      <!-- Live Metrics Panel -->
-      <%= if @selected_app && @app_metrics[@selected_app] do %>
-        <%
-          current_metrics = @app_metrics[@selected_app] || []
-        %>
-        <div class="mt-6 mx-2 p-3 bg-gray-800 rounded">
-          <div class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wide">LIVE METRICS</div>
-          <div class="space-y-1 text-xs">
-            <%= for {label, result} <- current_metrics do %>
-              <div>
-                <%= case result do %>
-                  <% {:ok, []} -> %>
-                    <div class="flex justify-between text-gray-300">
-                      <span><%= label %>:</span>
-                      <span class="text-gray-500 italic">No data</span>
-                    </div>
-                  <% {:ok, data} -> %>
-                    <%= for metric <- data do %>
-                      <%= if label == "Memory Usage (%)" and metric["value"] do %>
-                        <div class="flex justify-between text-gray-300">
-                          <span>Memory:</span>
-                          <%
-                            memory_val = Float.round(String.to_float(Enum.at(metric["value"], 1)), 1)
-                          %>
-                          <span class={if memory_val > 80, do: "text-red-400", else: "text-green-400"}>
-                            <%= memory_val %>%
-                          </span>
-                        </div>
+      <!-- Optimized Live Metrics Panel -->
+      <div class="mt-6 mx-2 p-3 bg-gray-800 rounded">
+        <div class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wide">LIVE METRICS</div>
+        <%= cond do %>
+          <% @selected_app && @app_metrics[@selected_app] && @app_metrics[@selected_app] != {:error, _} -> %>
+            <!-- Show actual metrics -->
+            <%
+              current_metrics = @app_metrics[@selected_app] || []
+            %>
+            <div class="space-y-1 text-xs">
+              <%= for {label, result} <- current_metrics do %>
+                <div>
+                  <%= case result do %>
+                    <% {:ok, []} -> %>
+                      <div class="flex justify-between text-gray-300">
+                        <span><%= label %>:</span>
+                        <span class="text-gray-500 italic">No data</span>
+                      </div>
+                    <% {:ok, data} -> %>
+                      <%= for metric <- data do %>
+                        <%= if label == "Memory Usage (%)" and metric["value"] do %>
+                          <div class="flex justify-between text-gray-300">
+                            <span>Memory:</span>
+                            <%
+                              memory_val = Float.round(String.to_float(Enum.at(metric["value"], 1)), 1)
+                            %>
+                            <span class={if memory_val > 80, do: "text-red-400", else: "text-green-400"}>
+                              <%= memory_val %>%
+                            </span>
+                          </div>
+                        <% end %>
+                        <%= if label == "CPU Usage" and metric["value"] do %>
+                          <div class="flex justify-between text-gray-300">
+                            <span>CPU:</span>
+                            <%
+                              cpu_val = Float.round(String.to_float(Enum.at(metric["value"], 1)), 2)
+                            %>
+                            <span class={if cpu_val > 70, do: "text-red-400", else: "text-green-400"}>
+                              <%= cpu_val %>%
+                            </span>
+                          </div>
+                        <% end %>
+                        <%= if label == "HTTP Responses (by status)" and metric["metric"]["status"] do %>
+                          <div class="flex justify-between text-gray-300">
+                            <span>Status <%= metric["metric"]["status"] %>:</span>
+                            <span class={case metric["metric"]["status"] do
+                              "200" -> "text-green-400"
+                              "404" -> "text-yellow-400"
+                              "502" -> "text-red-400"
+                              _ -> "text-gray-400"
+                            end}>
+                              <%= metric["value"] |> Enum.at(1) %>
+                            </span>
+                          </div>
+                        <% end %>
                       <% end %>
-                      <%= if label == "CPU Usage" and metric["value"] do %>
-                        <div class="flex justify-between text-gray-300">
-                          <span>CPU:</span>
-                          <%
-                            cpu_val = Float.round(String.to_float(Enum.at(metric["value"], 1)), 2)
-                          %>
-                          <span class={if cpu_val > 70, do: "text-red-400", else: "text-green-400"}>
-                            <%= cpu_val %>%
-                          </span>
-                        </div>
-                      <% end %>
-                      <%= if label == "HTTP Responses (by status)" and metric["metric"]["status"] do %>
-                        <div class="flex justify-between text-gray-300">
-                          <span>Status <%= metric["metric"]["status"] %>:</span>
-                          <span class={case metric["metric"]["status"] do
-                            "200" -> "text-green-400"
-                            "404" -> "text-yellow-400"
-                            "502" -> "text-red-400"
-                            _ -> "text-gray-400"
-                          end}>
-                            <%= metric["value"] |> Enum.at(1) %>
-                          </span>
-                        </div>
-                      <% end %>
-                    <% end %>
-                  <% {:error, err} -> %>
-                    <div class="flex justify-between text-gray-300">
-                      <span><%= label %>:</span>
-                      <span class="text-red-400"><%= err %></span>
-                    </div>
-                <% end %>
+                    <% {:error, err} -> %>
+                      <div class="flex justify-between text-gray-300">
+                        <span><%= label %>:</span>
+                        <span class="text-red-400"><%= err %></span>
+                      </div>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+          <% @selected_app && Map.get(@metrics_loading, @selected_app) -> %>
+            <!-- Show loading skeleton -->
+            <div class="space-y-2 animate-pulse">
+              <div class="flex justify-between">
+                <div class="h-2 bg-gray-700 rounded w-16"></div>
+                <div class="h-2 bg-gray-700 rounded w-10"></div>
               </div>
-            <% end %>
-          </div>
-        </div>
-      <% else %>
-        <div class="mt-6 mx-2 p-3 bg-gray-800 rounded">
-          <div class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wide">LIVE METRICS</div>
-          <div class="text-xs text-gray-500 italic">No metrics available yet.</div>
-        </div>
-      <% end %>
+              <div class="flex justify-between">
+                <div class="h-2 bg-gray-700 rounded w-12"></div>
+                <div class="h-2 bg-gray-700 rounded w-8"></div>
+              </div>
+              <div class="flex justify-between">
+                <div class="h-2 bg-gray-700 rounded w-20"></div>
+                <div class="h-2 bg-gray-700 rounded w-6"></div>
+              </div>
+            </div>
+          <% @selected_app && match?({:error, _}, @app_metrics[@selected_app]) -> %>
+            <!-- Show error state -->
+            <div class="text-xs text-red-400">
+              <%= case @app_metrics[@selected_app] do %>
+                <% {:error, msg} -> %>
+                  Error: <%= msg %>
+                <% _ -> %>
+                  Failed to load metrics
+              <% end %>
+              <button 
+                phx-click="select_app" 
+                phx-value-app={@selected_app}
+                class="ml-2 text-indigo-400 hover:text-indigo-300 underline"
+              >
+                Retry
+              </button>
+            </div>
+          <% true -> %>
+            <!-- Default state -->
+            <div class="text-xs text-gray-500 italic">
+              <%= if @selected_app do %>
+                Loading metrics...
+              <% else %>
+                Select an app to view metrics
+              <% end %>
+            </div>
+        <% end %>
+      </div>
 
       <!-- Live Logs Panel -->
       <%= if @selected_app do %>
@@ -215,7 +261,7 @@
               </div>
             <% else %>
               <%= if Map.get(@logs, @selected_app) && length(Map.get(@logs, @selected_app, [])) > 0 do %>
-                <%= for log <- Enum.take(Map.get(@logs, @selected_app, []), -20) do %>
+                <%= for log <- Enum.take(Map.get(@logs, @selected_app, []), -5) do %>
                   <div class="mb-1 flex text-xs">
                     <span class="text-gray-500 w-16 flex-shrink-0 mr-2"><%= log.timestamp %></span>
                     <span class={"w-8 flex-shrink-0 font-semibold mr-2 " <>
@@ -230,9 +276,9 @@
                     <span class="text-gray-100 flex-1 break-all leading-tight"><%= String.slice(log.message, 0, 100) %><%= if String.length(log.message) > 100, do: "..." %></span>
                   </div>
                 <% end %>
-                <%= if length(Map.get(@logs, @selected_app, [])) > 20 do %>
+                <%= if length(Map.get(@logs, @selected_app, [])) > 5 do %>
                   <div class="text-gray-500 text-center text-xs py-1">
-                    ... showing last 20 entries (total: <%= length(Map.get(@logs, @selected_app, [])) %>)
+                    ... showing last 5 entries (total: <%= length(Map.get(@logs, @selected_app, [])) %>)
                   </div>
                 <% end %>
               <% else %>
@@ -262,19 +308,16 @@
         </div>
       </div>
       <div class="flex space-x-1">
-        <!-- Mic Icon -->
-        <svg class="w-4 h-4 text-gray-400 hover:text-white cursor-pointer transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
-        </svg>
-        <!-- Headphones Icon -->
-        <svg class="w-4 h-4 text-gray-400 hover:text-white cursor-pointer transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
-        </svg>
-        <!-- Settings Icon -->
-        <svg class="w-4 h-4 text-gray-400 hover:text-white cursor-pointer transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-        </svg>
+        <!-- Status indicators -->
+        <div class="flex items-center space-x-1 text-xs">
+          <%= if @loading do %>
+            <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+            <span class="text-gray-400">Loading...</span>
+          <% else %>
+            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+            <span class="text-gray-400">Online</span>
+          <% end %>
+        </div>
       </div>
     </div>
   </div>
@@ -299,6 +342,12 @@
       <% end %>
       <div class="ml-auto text-sm text-gray-400">
         AI Monitoring Assistant
+        <%= if Map.get(@metrics_loading, @selected_app) do %>
+          <span class="ml-2 inline-flex items-center">
+            <div class="animate-spin rounded-full h-3 w-3 border-b border-indigo-400"></div>
+            <span class="ml-1 text-xs">Loading metrics...</span>
+          </span>
+        <% end %>
       </div>
     </div>
 
@@ -327,6 +376,9 @@
         </div>
       <% end %>
       
+      <%= if @is_typing do %>
+        <div class="flex space-x-3">
+          <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify      
       <%= if @is_typing do %>
         <div class="flex space-x-3">
           <div class="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
