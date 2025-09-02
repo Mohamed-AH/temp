@@ -8,7 +8,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
     env_token = FullstackChallenge.EnvConfig.get_fly_token()
     is_env_token = env_token && fly_token && env_token == fly_token
 
-    # Discord-style chat demo apps/messages (leave as demo, or map from @apps for real Fly.io data!)
+    # Discord-style chat demo apps/messages
     discord_demo_apps = [
       %{id: "web-app-prod", name: "phoenix-web-app", status: "healthy", type: "web"},
       %{id: "api-backend", name: "elixir-api", status: "warning", type: "api"},
@@ -31,9 +31,12 @@ defmodule FullstackChallengeWeb.DashboardLive do
        socket
        |> assign(:fly_token, fly_token)
        |> assign(:is_env_token, is_env_token)
-       |> assign(:apps, [])                      
+       |> assign(:apps, [])
        |> assign(:loading, true)
        |> assign(:error, nil)
+       |> assign(:app_metrics, %{})
+       |> assign(:async_tasks, %{})
+       |> assign(:metrics_loading, %{})
        |> assign(:show_launch_modal, false)
        |> assign(:show_destroy_modal, false)
        |> assign(:destroy_app, nil)
@@ -43,10 +46,9 @@ defmodule FullstackChallengeWeb.DashboardLive do
        |> assign(:messages, discord_demo_messages)
        |> assign(:typing_message, "")
        |> assign(:is_typing, false)
-       # New log-related assigns
-       |> assign(:logs, %{}) # %{app_id => [log_entries]}
+       |> assign(:logs, %{})
        |> assign(:logs_loading, false)
-       |> assign(:log_streams, %{}) # Track active log streams per app
+       |> assign(:log_streams, %{})
        |> load_apps()}
     else
       {:ok, push_navigate(socket, to: ~p"/auth")}
@@ -59,23 +61,23 @@ defmodule FullstackChallengeWeb.DashboardLive do
   def handle_event("load_apps", _, socket) do
     {:noreply, socket |> assign(:loading, true) |> load_apps()}
   end
-  
+
   def handle_event("show_launch_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_launch_modal, true)
      |> assign(:launch_form, to_form(%{"name" => ""}, as: :launch))}
   end
-  
+
   def handle_event("hide_launch_modal", _, socket) do
     {:noreply, assign(socket, :show_launch_modal, false)}
   end
-  
+
   def handle_event("validate_launch", %{"launch" => params}, socket) do
     form = to_form(params, as: :launch)
     {:noreply, assign(socket, :launch_form, form)}
   end
-  
+
   def handle_event("launch_app", %{"launch" => %{"name" => name}}, socket) do
     case launch_app(socket.assigns.fly_token, name) do
       {:ok, _result} ->
@@ -90,21 +92,21 @@ defmodule FullstackChallengeWeb.DashboardLive do
          |> put_flash(:error, "Failed to launch app: #{reason}")}
     end
   end
-  
+
   def handle_event("show_destroy_modal", %{"app" => app_name}, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, true)
      |> assign(:destroy_app, app_name)}
   end
-  
+
   def handle_event("hide_destroy_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, false)
      |> assign(:destroy_app, nil)}
   end
-  
+
   def handle_event("destroy_app", _, socket) do
     app_name = socket.assigns.destroy_app
     Logger.info("Starting destroy for app: #{app_name}")
@@ -128,31 +130,22 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   #########################################
-  #  DISCORD-STYLE SIDEBAR/CHAT HANDLERS  #
+  #  OPTIMIZED APP SELECTION HANDLERS    #
   #########################################
   def handle_event("select_app", %{"app" => app_id}, socket) do
-    # Fetch fresh metrics for the selected app only
-    selected_app = app_id
-    apps = socket.assigns.apps
-    app = Enum.find(apps, &(&1.id == selected_app))
+    # Instant app switching - no blocking operations
+    socket =
+      socket
+      |> assign(:selected_app, app_id)
+      |> async_fetch_metrics_for_app(app_id)
 
-    app_metrics =
-      Map.put(
-        socket.assigns.app_metrics || %{},
-        selected_app,
-        if(app, do: FullstackChallenge.FlyMetrics.fetch_for_app(app.name), else: [])
-      )
-
-    {:noreply,
-     socket
-     |> assign(:selected_app, selected_app)
-     |> assign(:app_metrics, app_metrics)}
+    {:noreply, socket}
   end
 
   def handle_event("update_typing", %{"typing_message" => val}, socket) do
     {:noreply, assign(socket, typing_message: val)}
   end
-  
+
   def handle_event("send_message", _params, socket) do
     app = socket.assigns.selected_app
     msg = (socket.assigns.typing_message || "") |> String.trim()
@@ -174,21 +167,19 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   #########################
-  #   NEW LOGS HANDLERS   #
+  #   LOGS HANDLERS       #
   #########################
   def handle_event("start_log_stream", _, socket) do
     app_id = socket.assigns.selected_app
-    
+
     if app_id && !Map.get(socket.assigns.log_streams, app_id) do
       app = Enum.find(socket.assigns.apps, &(&1.id == app_id))
-      
+
       if app do
-        # Start the log streaming process
         {:ok, stream_pid} = start_log_stream(socket.assigns.fly_token, app.name, self(), app_id)
-        
         log_streams = Map.put(socket.assigns.log_streams, app_id, stream_pid)
-        
-        {:noreply, 
+
+        {:noreply,
          socket
          |> assign(:log_streams, log_streams)
          |> assign(:logs_loading, true)}
@@ -202,14 +193,14 @@ defmodule FullstackChallengeWeb.DashboardLive do
 
   def handle_event("stop_log_stream", _, socket) do
     app_id = socket.assigns.selected_app
-    
+
     if app_id && Map.get(socket.assigns.log_streams, app_id) do
       stream_pid = socket.assigns.log_streams[app_id]
       Process.exit(stream_pid, :normal)
-      
+
       log_streams = Map.delete(socket.assigns.log_streams, app_id)
-      
-      {:noreply, 
+
+      {:noreply,
        socket
        |> assign(:log_streams, log_streams)
        |> assign(:logs_loading, false)}
@@ -224,15 +215,61 @@ defmodule FullstackChallengeWeb.DashboardLive do
     {:noreply, assign(socket, :logs, logs)}
   end
 
-  # Handle incoming log messages from the CLI stream process
+  #########################
+  #   ASYNC TASK HANDLERS #
+  #########################
+
+  # Handle async metrics task completion
+  def handle_info({ref, metrics_result}, socket) when is_reference(ref) do
+    case find_task_for_ref(socket.assigns.async_tasks, ref) do
+      {app_id, _task} ->
+        app_metrics = Map.put(socket.assigns.app_metrics, app_id, metrics_result)
+        tasks = Map.delete(socket.assigns.async_tasks, app_id)
+        metrics_loading = Map.delete(socket.assigns.metrics_loading, app_id)
+
+        {:noreply,
+         socket
+         |> assign(:app_metrics, app_metrics)
+         |> assign(:async_tasks, tasks)
+         |> assign(:metrics_loading, metrics_loading)}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
+  # Handle normal task shutdown
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, socket), do: {:noreply, socket}
+
+  # Handle task failures
+  def handle_info({:DOWN, ref, :process, _pid, reason}, socket) do
+    Logger.warning("Metrics fetch task failed: #{inspect(reason)}")
+
+    case find_task_for_ref(socket.assigns.async_tasks, ref) do
+      {app_id, _task} ->
+        tasks = Map.delete(socket.assigns.async_tasks, app_id)
+        metrics_loading = Map.delete(socket.assigns.metrics_loading, app_id)
+        # Set error state for this app's metrics
+        app_metrics = Map.put(socket.assigns.app_metrics, app_id, {:error, "Failed to load metrics"})
+
+        {:noreply,
+         socket
+         |> assign(:async_tasks, tasks)
+         |> assign(:metrics_loading, metrics_loading)
+         |> assign(:app_metrics, app_metrics)}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_info({:log_entry, app_id, log_entry}, socket) do
     current_logs = Map.get(socket.assigns.logs, app_id, [])
-    # Keep only the last 1000 log entries to prevent memory issues
     updated_logs = (current_logs ++ [log_entry]) |> Enum.take(-1000)
-    
+
     logs = Map.put(socket.assigns.logs, app_id, updated_logs)
-    
-    {:noreply, 
+
+    {:noreply,
      socket
      |> assign(:logs, logs)
      |> assign(:logs_loading, false)}
@@ -245,9 +282,9 @@ defmodule FullstackChallengeWeb.DashboardLive do
 
   def handle_info({:log_stream_error, app_id, error}, socket) do
     Logger.warning("Log stream error for app #{app_id}: #{error}")
-    
+
     log_streams = Map.delete(socket.assigns.log_streams, app_id)
-    
+
     {:noreply,
      socket
      |> assign(:log_streams, log_streams)
@@ -266,10 +303,54 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   #########################
+  #   ASYNC HELPERS       #
+  #########################
+
+  defp async_fetch_metrics_for_app(socket, app_id) do
+    apps = socket.assigns.apps
+    app = Enum.find(apps, &(&1.id == app_id))
+
+    if app && !Map.get(socket.assigns.async_tasks, app_id) do
+      # Mark as loading
+      metrics_loading = Map.put(socket.assigns.metrics_loading, app_id, true)
+
+      # Start async task
+      task = Task.async(fn ->
+        try do
+          FullstackChallenge.FlyMetrics.fetch_for_app(app.name)
+        rescue
+          error ->
+            Logger.warning("Error fetching metrics for #{app.name}: #{inspect(error)}")
+            {:error, "Metrics unavailable"}
+        catch
+          :exit, reason ->
+            Logger.warning("Metrics fetch timeout for #{app.name}: #{inspect(reason)}")
+            {:error, "Metrics timeout"}
+        end
+      end)
+
+      # Store task reference
+      tasks = Map.put(socket.assigns.async_tasks, app_id, task)
+
+      socket
+      |> assign(:async_tasks, tasks)
+      |> assign(:metrics_loading, metrics_loading)
+    else
+      socket
+    end
+  end
+
+  defp find_task_for_ref(tasks, ref) do
+    Enum.find(tasks, fn {_app_id, task} ->
+      task.ref == ref
+    end)
+  end
+
+  #########################
   #   LOG STREAMING IMPL  #
   #########################
   defp start_log_stream(token, app_name, parent_pid, app_id) do
-    pid = spawn_link(fn -> 
+    pid = spawn_link(fn ->
       stream_logs_via_cli(token, app_name, parent_pid, app_id)
     end)
     {:ok, pid}
@@ -277,15 +358,9 @@ defmodule FullstackChallengeWeb.DashboardLive do
 
   defp stream_logs_via_cli(token, app_name, parent_pid, app_id) do
     Logger.info("Starting log stream via CLI for app: #{app_name}")
-    
-    # Set environment variable for fly CLI authentication
-    env = [{"FLY_API_TOKEN", token}]
-    
-    # Use fly logs command with JSON output and follow flag
+
+    _env = [{"FLY_API_TOKEN", token}]
     cmd_args = ["logs", "--app", app_name, "--json"]
-    Logger.info("fly path: #{inspect(System.find_executable("fly"))}")
-    Logger.info("cmd_args: #{inspect(cmd_args)}")
-    Logger.info("env: #{inspect(env)}")
 
     try do
       port = Port.open(
@@ -294,14 +369,13 @@ defmodule FullstackChallengeWeb.DashboardLive do
           :binary,
           :exit_status,
           {:args, cmd_args},
-         
-          
+          {:env, [{"FLY_API_TOKEN", token}]}
         ]
       )
-      
+
       send(parent_pid, {:log_stream_started, app_id})
       receive_cli_logs(parent_pid, app_id, port)
-      
+
     rescue
       error ->
         Logger.error("Failed to start fly logs command: #{inspect(error)}")
@@ -312,43 +386,48 @@ defmodule FullstackChallengeWeb.DashboardLive do
   defp receive_cli_logs(parent_pid, app_id, port) do
     receive do
       {^port, {:data, {:eol, line}}} ->
-        case parse_fly_log_line(line) do
-          {:ok, log_entry} ->
-            send(parent_pid, {:log_entry, app_id, log_entry})
-          {:error, _reason} ->
-            # Send raw line if parsing fails
-            log_entry = %{
-              timestamp: timestamp_now(),
-              level: "info",
-              message: String.trim(line),
-              instance: nil,
-              raw: line
-            }
-            send(parent_pid, {:log_entry, app_id, log_entry})
-        end
+        handle_log_line(line, parent_pid, app_id)
         receive_cli_logs(parent_pid, app_id, port)
-        
+
       {^port, {:data, {:noeol, _partial_line}}} ->
-        # Handle partial lines - just continue for now
         receive_cli_logs(parent_pid, app_id, port)
-        
+
+      {^port, {:data, line}} when is_binary(line) ->
+        handle_log_line(line, parent_pid, app_id)
+        receive_cli_logs(parent_pid, app_id, port)
+
       {^port, {:exit_status, status}} ->
         Logger.info("Fly logs command exited with status: #{status}")
         send(parent_pid, {:log_stream_error, app_id, "Command exited with status #{status}"})
-        
+
       other ->
         Logger.debug("Unexpected message from fly logs: #{inspect(other)}")
         receive_cli_logs(parent_pid, app_id, port)
-        
     after
-      60_000 -> # 60 second timeout
+      60_000 ->
         Logger.info("Log stream timeout for app_id: #{app_id}")
         Port.close(port)
         send(parent_pid, {:log_stream_error, app_id, "Stream timeout"})
     end
   end
 
-  # Parse fly CLI JSON log output
+  defp handle_log_line(line, parent_pid, app_id) do
+    case parse_fly_log_line(line) do
+      {:ok, log_entry} ->
+        send(parent_pid, {:log_entry, app_id, log_entry})
+
+      {:error, _reason} ->
+        log_entry = %{
+          timestamp: timestamp_now(),
+          level: "info",
+          message: String.trim(line),
+          instance: nil,
+          raw: line
+        }
+        send(parent_pid, {:log_entry, app_id, log_entry})
+    end
+  end
+
   defp parse_fly_log_line(line) do
     try do
       case Jason.decode(String.trim(line)) do
@@ -362,24 +441,23 @@ defmodule FullstackChallengeWeb.DashboardLive do
             raw: line
           }}
         {:ok, _json} ->
-          # Fallback for unexpected JSON structure
           {:error, "unexpected_json_structure"}
         {:error, _} ->
           {:error, "invalid_json"}
       end
     rescue
-      _ -> 
+      _ ->
         {:error, "parse_error"}
     end
   end
 
   defp format_fly_timestamp(timestamp) when is_binary(timestamp) do
     case DateTime.from_iso8601(timestamp) do
-      {:ok, dt, _} -> 
+      {:ok, dt, _} ->
         dt
         |> DateTime.shift_zone!("Etc/UTC")
         |> Calendar.strftime("%H:%M:%S")
-      _ -> 
+      _ ->
         timestamp_now()
     end
   end
@@ -391,7 +469,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
       msg =~ "health" ->
         app_struct = Enum.find(socket.assigns.discord_apps, &(&1.id == app))
         icon = app_status_icon(app_struct.status)
-        "Health check for **#{app_struct.name}** #{icon} – All systems up!"
+        "Health check for **#{app_struct.name}** #{icon} — All systems up!"
       msg =~ "error" or msg =~ "errors" ->
         if app == "worker-service" do
           "🔴 **Critical Error:** Worker process failure detected!\n\nCheck logs!"
@@ -406,17 +484,13 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   #########################
-  #     FLY.IO HELPERS    #
+  #     OPTIMIZED FLY.IO  #
   #########################
   defp load_apps(socket) do
     case list_apps(socket.assigns.fly_token) do
       {:ok, apps} ->
-        # force id to string for all apps in case
         apps = Enum.map(apps, fn app -> %{app | id: to_string(app.id)} end)
-        app_metrics =
-          for app <- apps, into: %{} do
-            {app.id, FullstackChallenge.FlyMetrics.fetch_for_app(app.name)}
-          end
+
         real_ids = Enum.map(apps, & &1.id)
         selected_app =
           if socket.assigns.selected_app in real_ids do
@@ -425,12 +499,21 @@ defmodule FullstackChallengeWeb.DashboardLive do
             List.first(real_ids)
           end
 
-        socket
-        |> assign(:apps, apps)
-        |> assign(:app_metrics, app_metrics)
-        |> assign(:selected_app, selected_app)
-        |> assign(:loading, false)
-        |> assign(:error, nil)
+        socket =
+          socket
+          |> assign(:apps, apps)
+          |> assign(:app_metrics, %{})
+          |> assign(:selected_app, selected_app)
+          |> assign(:loading, false)
+          |> assign(:error, nil)
+
+        # Only fetch metrics for selected app initially
+        if selected_app do
+          async_fetch_metrics_for_app(socket, selected_app)
+        else
+          socket
+        end
+
       {:error, reason} ->
         socket
         |> assign(:loading, false)
@@ -443,29 +526,37 @@ defmodule FullstackChallengeWeb.DashboardLive do
       Logger.warning("Invalid token format: #{String.slice(token, 0, 8)}...")
       {:error, "Invalid token format"}
     end
+
     headers = [{"Authorization", "Bearer #{token}"}]
     Logger.info("Calling Fly.io GraphQL API to list apps...")
+
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
-           form: [query: "{ apps { nodes { id name status organization { slug } createdAt } } }"]
+           form: [query: "{ apps { nodes { id name status organization { slug } createdAt } } }"],
+           connect_options: [timeout: 10_000],
+           receive_timeout: 15_000
          ) do
       {:ok, %{status: 200, body: body}} ->
-        Logger.info("Fly.io API Response: #{inspect(body)}")
+        Logger.info("Fly.io API Response received")
         apps = parse_apps_response(body)
-        Logger.info("Parsed apps: #{inspect(apps)}")
+        Logger.info("Parsed #{length(apps)} apps")
         {:ok, apps}
       {:ok, %{status: 401}} ->
         Logger.warning("Fly.io API returned 401 Unauthorized")
         {:error, "Invalid token"}
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("Fly.io API returned status #{status} with body: #{inspect(body)}")
+      {:ok, %{status: status, body: _body}} ->
+        Logger.warning("Fly.io API returned status #{status}")
         {:error, "API error (#{status})"}
+      {:error, %{reason: :timeout}} ->
+        Logger.error("Fly.io API request timed out")
+        {:error, "Request timeout - please check your connection"}
       {:error, reason} ->
         Logger.error("Network error calling Fly.io API: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
 
+  # [Rest of the helper functions remain the same...]
   defp launch_app(token, name) do
     Logger.info("Attempting to launch app: #{name}")
     case get_user_organization(token) do
@@ -559,7 +650,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
     }
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
-           body: Jason.encode!(ipv4_mutation)
+           body: Jason.encode!(mutation)
          ) do
       {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv4_data}}}} when not is_nil(ipv4_data) ->
         Logger.info("Allocated IPv4 for app #{app_name}: #{inspect(ipv4_data)}")
@@ -603,7 +694,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
     }
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
-           body: Jason.encode!(ipv6_mutation)
+           body: Jason.encode!(mutation)
          ) do
       {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv6_data}}}} when not is_nil(ipv6_data) ->
         Logger.info("Allocated IPv6 for app #{app_name}: #{inspect(ipv6_data)}")
@@ -767,7 +858,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
         status: Map.get(app, "status", "running"),
         region: Map.get(app["organization"], "slug", "unknown"),
         created_at: Map.get(app, "createdAt", "unknown"),
-        type: "web"    # <--- This line is NEW; set as needed ("web", "api", "worker", etc.)
+        type: "web"
       }
     end)
   end
@@ -776,15 +867,15 @@ defmodule FullstackChallengeWeb.DashboardLive do
     String.starts_with?(token, "FlyV1") and String.length(token) > 50
   end
   defp valid_token_format?(_), do: false
-  
+
   defp get_token_from_session(session) do
     case Map.get(session, "auth_token_ref") do
       ref when is_binary(ref) ->
         session_id = Map.get(session, "session_id") || generate_session_id()
         case FullstackChallenge.TokenStore.get_token(ref, session_id) do
-          {:ok, token} -> 
+          {:ok, token} ->
             token
-          {:error, reason} -> 
+          {:error, reason} ->
             Logger.debug("Token retrieval failed: #{reason}")
             try_fallback_methods(session)
         end
@@ -792,21 +883,21 @@ defmodule FullstackChallengeWeb.DashboardLive do
         try_fallback_methods(session)
     end
   end
-  
+
   defp try_fallback_methods(session) do
     case FullstackChallenge.TokenSecurity.decrypt_token(Map.get(session, "encrypted_fly_token")) do
-      {:ok, token} -> 
+      {:ok, token} ->
         token
-      _ -> 
+      _ ->
         case Map.get(session, "auth_token") do
-          token when is_binary(token) -> 
+          token when is_binary(token) ->
             token
-          _ -> 
+          _ ->
             FullstackChallenge.EnvConfig.get_fly_token()
         end
     end
   end
-  
+
   defp generate_session_id do
     :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
   end
@@ -818,7 +909,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
   defp app_icon("api"), do: "⚡"
   defp app_icon("worker"), do: "⚙️"
   defp app_icon(_), do: "#"
-  
+
   defp app_status_icon("deployed"), do: "🟢"
   defp app_status_icon("pending"), do: "🟡"
   defp app_status_icon("suspended"), do: "🔴"
@@ -830,5 +921,4 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
   defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
-
 end
