@@ -282,8 +282,11 @@ defmodule FullstackChallengeWeb.DashboardLive do
     env = [{"FLY_API_TOKEN", token}]
     
     # Use fly logs command with JSON output and follow flag
-    cmd_args = ["logs", "--app", app_name, "--format", "json", "--follow"]
-    
+    cmd_args = ["logs", "--app", app_name, "--json"]
+    Logger.info("fly path: #{inspect(System.find_executable("fly"))}")
+    Logger.info("cmd_args: #{inspect(cmd_args)}")
+    Logger.info("env: #{inspect(env)}")
+
     try do
       port = Port.open(
         {:spawn_executable, System.find_executable("fly")},
@@ -291,8 +294,8 @@ defmodule FullstackChallengeWeb.DashboardLive do
           :binary,
           :exit_status,
           {:args, cmd_args},
-          {:env, env},
-          {:line, 8192}  # Handle long log lines
+         
+          
         ]
       )
       
